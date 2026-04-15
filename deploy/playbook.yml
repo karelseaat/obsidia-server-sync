@@ -1,0 +1,150 @@
+- name: Deploy Obsidia Server Sync backend
+  hosts: obsidia_sync
+  become: true
+  vars:
+    obsidia_source_files:
+      - main.py
+      - requirements.txt
+
+  pre_tasks:
+    - name: Require a real API key before deployment
+      ansible.builtin.assert:
+        that:
+          - obsidia_api_key != "__SET_ME__"
+          - obsidia_api_key | length >= 12
+        fail_msg: >-
+          Set obsidia_api_key before deploying, for example with
+          --extra-vars "obsidia_api_key=your-secret-key".
+
+  tasks:
+    - name: Install backend dependencies
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - python3
+          - python3-venv
+        state: present
+        update_cache: true
+
+    - name: Create backend group
+      ansible.builtin.group:
+        name: "{{ obsidia_app_group }}"
+        system: true
+
+    - name: Create backend user
+      ansible.builtin.user:
+        name: "{{ obsidia_app_user }}"
+        group: "{{ obsidia_app_group }}"
+        home: "{{ obsidia_app_root }}"
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+
+    - name: Create backend directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner | default(obsidia_app_user) }}"
+        group: "{{ item.group | default(obsidia_app_group) }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - path: "{{ obsidia_app_root }}"
+          mode: "0755"
+        - path: "{{ obsidia_app_dir }}"
+          mode: "0755"
+        - path: "{{ obsidia_sync_dir }}"
+          mode: "0750"
+
+    - name: Upload backend application files
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../{{ item }}"
+        dest: "{{ obsidia_app_dir }}/{{ item }}"
+        owner: "{{ obsidia_app_user }}"
+        group: "{{ obsidia_app_group }}"
+        mode: "0644"
+      loop: "{{ obsidia_source_files }}"
+      notify: Restart backend service
+
+    - name: Configure backend environment file
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/obsidia-server-sync.env.j2"
+        dest: "{{ obsidia_env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Restart backend service
+
+    - name: Install Python dependencies into the service virtualenv
+      ansible.builtin.pip:
+        requirements: "{{ obsidia_app_dir }}/requirements.txt"
+        virtualenv: "{{ obsidia_venv_dir }}"
+        virtualenv_command: /usr/bin/python3 -m venv
+      notify: Restart backend service
+
+    - name: Install systemd service
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/obsidia-server-sync.service.j2"
+        dest: "/etc/systemd/system/{{ obsidia_service_name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart backend service
+
+    - name: Install nginx site
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/nginx-obsidia-server-sync.conf.j2"
+        dest: "/etc/nginx/sites-available/{{ obsidia_nginx_site_name }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Enable nginx site
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ obsidia_nginx_site_name }}"
+        dest: "/etc/nginx/sites-enabled/{{ obsidia_nginx_site_name }}"
+        state: link
+      notify: Reload nginx
+
+    - name: Disable default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      when: obsidia_disable_default_site
+      notify: Reload nginx
+
+    - name: Validate nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Flush handlers before enabling services
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure backend service is enabled and running
+      ansible.builtin.systemd:
+        name: "{{ obsidia_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Ensure nginx is enabled and running
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart backend service
+      ansible.builtin.systemd:
+        name: "{{ obsidia_service_name }}"
+        state: restarted
+
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded

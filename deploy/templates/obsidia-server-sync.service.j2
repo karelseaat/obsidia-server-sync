@@ -1,0 +1,23 @@
+[Unit]
+Description=Obsidia Server Sync backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ obsidia_app_user }}
+Group={{ obsidia_app_group }}
+WorkingDirectory={{ obsidia_app_dir }}
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile={{ obsidia_env_file }}
+ExecStart={{ obsidia_venv_dir }}/bin/uvicorn main:app --host {{ obsidia_bind_host }} --port {{ obsidia_bind_port }}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths={{ obsidia_sync_dir }}
+
+[Install]
+WantedBy=multi-user.target
