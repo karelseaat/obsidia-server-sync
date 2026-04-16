@@ -10,7 +10,8 @@ Group={{ obsidia_app_group }}
 WorkingDirectory={{ obsidia_app_dir }}
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile={{ obsidia_env_file }}
-ExecStart={{ obsidia_venv_dir }}/bin/uvicorn main:app --host {{ obsidia_bind_host }} --port {{ obsidia_bind_port }}
+UMask=0007
+ExecStart={{ obsidia_venv_dir }}/bin/uvicorn main:app --uds {{ obsidia_socket_path }}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

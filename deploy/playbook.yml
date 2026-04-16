@@ -9,13 +9,12 @@
     obsidia_app_root: /opt/obsidia-server-sync
     obsidia_app_dir: "{{ obsidia_app_root }}/app"
     obsidia_venv_dir: "{{ obsidia_app_root }}/venv"
+    obsidia_socket_path: "{{ obsidia_app_root }}/{{ obsidia_service_name }}.sock"
     obsidia_env_file: /etc/obsidia-server-sync.env
     obsidia_sync_dir: /var/lib/obsidia-server-sync/data
-    obsidia_bind_host: 127.0.0.1
-    obsidia_bind_port: 8000
     obsidia_nginx_site_name: obsidia-server-sync
-    obsidia_disable_default_site: true
-    obsidia_enable_http_api: false
+    obsidia_nginx_parent_site: /etc/nginx/sites-available/proxycollector
+    obsidia_public_prefix: /obsidia-sync
     obsidia_event_retention_ms: 2592000000
     obsidia_compaction_interval_ms: 3600000
     obsidia_api_key: "__SET_ME__"
@@ -57,6 +56,12 @@
         shell: /usr/sbin/nologin
         system: true
         create_home: false
+
+    - name: Allow nginx to access backend socket
+      ansible.builtin.user:
+        name: www-data
+        groups: "{{ obsidia_app_group }}"
+        append: true
 
     - name: Create backend directories
       ansible.builtin.file:
@@ -110,27 +115,45 @@
         - Reload systemd
         - Restart backend service
 
-    - name: Install nginx site
-      ansible.builtin.template:
-        src: templates/nginx-obsidia-server-sync.conf.j2
-        dest: "/etc/nginx/sites-available/{{ obsidia_nginx_site_name }}"
-        owner: root
-        group: root
-        mode: "0644"
-      notify: Reload nginx
-
-    - name: Enable nginx site
+    - name: Remove standalone nginx site from sites-enabled
       ansible.builtin.file:
-        src: "/etc/nginx/sites-available/{{ obsidia_nginx_site_name }}"
-        dest: "/etc/nginx/sites-enabled/{{ obsidia_nginx_site_name }}"
-        state: link
+        path: "/etc/nginx/sites-enabled/{{ obsidia_nginx_site_name }}"
+        state: absent
       notify: Reload nginx
 
-    - name: Disable default nginx site
+    - name: Remove standalone nginx site from sites-available
+      ansible.builtin.file:
+        path: "/etc/nginx/sites-available/{{ obsidia_nginx_site_name }}"
+        state: absent
+      notify: Reload nginx
+
+    - name: Remove stray distro default symlink created during earlier deploy
       ansible.builtin.file:
         path: /etc/nginx/sites-enabled/default
         state: absent
-      when: obsidia_disable_default_site
+      when: obsidia_nginx_parent_site != '/etc/nginx/sites-available/default'
+      notify: Reload nginx
+
+    - name: Check bare-IP nginx site exists
+      ansible.builtin.stat:
+        path: "{{ obsidia_nginx_parent_site }}"
+      register: obsidia_nginx_parent_site_stat
+
+    - name: Require bare-IP nginx site for prefixed deployment
+      ansible.builtin.assert:
+        that:
+          - obsidia_nginx_parent_site_stat.stat.exists
+        fail_msg: >-
+          The parent nginx site {{ obsidia_nginx_parent_site }} does not exist.
+          Set obsidia_nginx_parent_site to the server block that should host
+          {{ obsidia_public_prefix }}/.
+
+    - name: Mount obsidia routes under the shared nginx site
+      ansible.builtin.blockinfile:
+        path: "{{ obsidia_nginx_parent_site }}"
+        marker: "    # {mark} OBSIDIA SERVER SYNC"
+        insertbefore: '^    location / \{$'
+        block: "{{ lookup('template', 'templates/nginx-obsidia-server-sync-prefix.conf.j2') }}"
       notify: Reload nginx
 
     - name: Validate nginx configuration

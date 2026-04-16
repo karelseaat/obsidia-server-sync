@@ -1,15 +1,14 @@
+from contextlib import asynccontextmanager
 import json
 import os
 import sqlite3
 import struct
 import time
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-
-app = FastAPI()
 
 DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 DEFAULT_COMPACTION_INTERVAL_MS = 60 * 60 * 1000
@@ -42,19 +41,6 @@ class SyncPayload(BaseModel):
     oldPath: Optional[str] = None
     lastModified: int
     knownRemoteModified: Optional[int] = None
-
-
-def verify_token(authorization: Optional[str] = Header(None)) -> None:
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Invalid authentication scheme")
-
-    if token != API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid API key")
-
 
 def verify_socket_auth(payload: Dict[str, Any]) -> None:
     api_key = payload.get("apiKey")
@@ -126,6 +112,15 @@ def initialize_state() -> None:
             set_metadata_int(connection, "last_compaction_at", 0)
 
         compact_events_if_due(connection, force=True)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    initialize_state()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 def seed_existing_files(connection: sqlite3.Connection) -> None:
@@ -569,29 +564,6 @@ async def send_socket_error(websocket: WebSocket, error: HTTPException) -> None:
 
 
 initialize_state()
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    initialize_state()
-
-
-@app.post("/api/sync")
-async def push_file(
-    payload: SyncPayload,
-    authorization: Optional[str] = Header(None),
-) -> Dict[str, int]:
-    verify_token(authorization)
-    return apply_sync_payload(payload)
-
-
-@app.get("/api/sync")
-async def pull_files(
-    since: int = Query(0, ge=0),
-    authorization: Optional[str] = Header(None),
-) -> List[Dict[str, Any]]:
-    verify_token(authorization)
-    return fetch_sync_events(since)
 
 
 @app.websocket("/ws/sync")

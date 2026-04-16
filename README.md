@@ -4,7 +4,7 @@ A FastAPI sync server designed to work with the Obsidian Auto Sync plugin.
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.10+
 - Dependencies listed in `requirements.txt`
 
 ## Setup
@@ -23,6 +23,18 @@ A FastAPI sync server designed to work with the Obsidian Auto Sync plugin.
     python main.py
     ```
 
+## Testing
+
+- Run the server test suite:
+  ```bash
+  python -m unittest discover -s tests -v
+  ```
+- Validate the deployment playbook:
+  ```bash
+  cd deploy
+  ansible-playbook --syntax-check playbook.yml
+  ```
+
 ## Deployment
 
 An Ansible deployment for **`aat@192.168.88.249`** is included under `deploy/` using a flat layout:
@@ -39,18 +51,25 @@ An Ansible deployment for **`aat@192.168.88.249`** is included under `deploy/` u
      --extra-vars "obsidia_api_key=replace-with-a-real-secret"
    ```
 2. The playbook installs:
-   - Python + virtualenv
-   - Nginx
-   - a systemd service for Uvicorn bound to `127.0.0.1:8000`
-   - an Nginx reverse proxy for `/ws/sync`
+    - Python + virtualenv
+    - Nginx
+    - a systemd service for Uvicorn bound to a Unix socket at `/opt/obsidia-server-sync/obsidia-server-sync.sock`
+    - a prefixed nginx route for `/obsidia-sync/ws/sync`
 
-The app is deployed to `/opt/obsidia-server-sync`, persistent sync data lives in `/var/lib/obsidia-server-sync/data`, and the Nginx site is configured for `192.168.88.249` by default.
+The app is deployed to `/opt/obsidia-server-sync`, persistent sync data lives in `/var/lib/obsidia-server-sync/data`, and the playbook mounts the sync routes into `/etc/nginx/sites-available/proxycollector` by default so the service can live alongside the other apps on that host.
 
-By default the playbook exposes **WebSocket transport only** on Nginx. If you want to re-enable the HTTP sync API, set:
+The playbook removes its old standalone nginx site and instead patches the existing bare-IP nginx server block with a dedicated prefix. Override these defaults with extra vars if your shared nginx site lives somewhere else:
 
 ```bash
---extra-vars "obsidia_enable_http_api=true"
+--extra-vars "obsidia_nginx_parent_site=/etc/nginx/sites-available/your-site obsidia_public_prefix=/your-prefix"
 ```
+
+For the current deployment, the Obsidian plugin should use:
+
+- **Transport:** `Binary WebSocket`
+- **Socket URL:** `ws://192.168.88.249/obsidia-sync/ws/sync`
+
+Because this host is shared, the prefix is the public separation boundary. The backend app serves `/ws/sync` internally; nginx rewrites `/obsidia-sync/ws/sync` to that upstream route.
 
 ## Configuration
 
@@ -61,92 +80,9 @@ You can configure the server using environment variables:
 -   `EVENT_RETENTION_MS`: How long to keep the raw event log before compacting it into snapshot mode (default: 30 days)
 -   `COMPACTION_INTERVAL_MS`: How often the server checks whether compaction should run (default: 1 hour)
 
-## API Endpoints
+## WebSocket API
 
-### POST `/api/sync`
-
-Applies a sync event on the server.
-
-**Headers:**
--   `Authorization: Bearer <API_KEY>`
-
-**Body (JSON):**
-
-#### Upsert
-```json
-{
-  "action": "upsert",
-  "path": "folder/note.md",
-  "content": "# My Note content...",
-  "lastModified": 1678886400000,
-  "knownRemoteModified": 1678886300000
-}
-```
-
-#### Rename
-```json
-{
-  "action": "rename",
-  "oldPath": "folder/old-name.md",
-  "path": "folder/new-name.md",
-  "content": "# My Note content...",
-  "lastModified": 1678886400000,
-  "knownRemoteModified": 1678886300000
-}
-```
-
-#### Delete
-```json
-{
-  "action": "delete",
-  "path": "folder/note.md",
-  "lastModified": 1678886400000,
-  "knownRemoteModified": 1678886300000
-}
-```
-
-`action` defaults to `upsert` for backwards compatibility with older clients.
-
-If `knownRemoteModified` does not match the current server version, the server responds with **HTTP 409 Conflict**. On success, the server returns the authoritative timestamp:
-
-```json
-{
-  "lastModified": 1678886400001
-}
-```
-
-### GET `/api/sync?since=<timestamp>`
-
-Retrieves sync events modified since the given timestamp (in milliseconds).
-
-**Headers:**
--   `Authorization: Bearer <API_KEY>`
-
-**Response (JSON):**
-```json
-[
-  {
-    "action": "upsert",
-    "path": "folder/note.md",
-    "content": "# Updated content...",
-    "lastModified": 1678886400000
-  },
-  {
-    "action": "rename",
-    "oldPath": "folder/old-name.md",
-    "path": "folder/new-name.md",
-    "content": "# Updated content...",
-    "lastModified": 1678886500000
-  },
-  {
-    "action": "delete",
-    "path": "folder/deleted-note.md",
-    "lastModified": 1678886600000
-  }
-]
-```
-
-### WebSocket `/ws/sync`
+### `/ws/sync`
 
 Binary WebSocket transport for the same sync operations. The client authenticates first, then sends push/fetch requests over binary frames.
 
@@ -169,11 +105,39 @@ N bytes UTF-8 JSON payload
 6. `6` = updates `{ "updates": [...] }`
 7. `7` = error `{ "status": 409, "message": "..." }`
 
-Push payloads and update payloads use the same action schema as the HTTP API.
+Push and fetch payloads use the same action schema:
+
+```json
+{
+  "action": "upsert",
+  "path": "folder/note.md",
+  "content": "# My Note content...",
+  "lastModified": 1678886400000,
+  "knownRemoteModified": 1678886300000
+}
+```
+
+Rename messages add `oldPath`; delete messages omit `content`. Successful push acknowledgements return:
+
+```json
+{
+  "lastModified": 1678886400001
+}
+```
 
 ## Notes
 
 - The server stores current file state plus a durable event log in `SYNC_DIR/.sync-state.sqlite3`.
-- Existing files in `SYNC_DIR` are indexed automatically on first startup so `GET /api/sync?since=0` can bootstrap a client.
+- Existing files in `SYNC_DIR` are indexed automatically on first startup so a client fetch with `since=0` can bootstrap from the WebSocket transport.
 - Older event history is compacted automatically. When a client asks for a timestamp older than the retained raw log, the server falls back to a **snapshot-style replay**: it returns the current live files as `upsert` events plus any matching `delete` tombstones needed to bring that client up to date.
-- The server now supports both **HTTP JSON** and a **binary WebSocket transport**. HTTP remains the compatibility API; WebSocket is the non-REST socket transport.
+- The server now exposes only the **binary WebSocket transport**.
+
+## Troubleshooting
+
+- **`WebSocket sync failed`:** verify the plugin uses `ws://<host>/obsidia-sync/ws/sync`, the API key matches `obsidia_api_key`, and `nginx` plus `obsidia-server-sync` are both running.
+- **Check live service status:**
+  ```bash
+  sudo systemctl status nginx obsidia-server-sync --no-pager
+  sudo journalctl -u nginx -u obsidia-server-sync -n 100 --no-pager
+  ```
+- **Check what was synced:** synced files are written under `/var/lib/obsidia-server-sync/data`, and the event/state database is `/var/lib/obsidia-server-sync/data/.sync-state.sqlite3`.
