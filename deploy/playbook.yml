@@ -2,6 +2,24 @@
   hosts: obsidia_sync
   become: true
   vars:
+    obsidia_app_name: obsidia-server-sync
+    obsidia_service_name: obsidia-server-sync
+    obsidia_app_user: obsidia-sync
+    obsidia_app_group: obsidia-sync
+    obsidia_app_root: /opt/obsidia-server-sync
+    obsidia_app_dir: "{{ obsidia_app_root }}/app"
+    obsidia_venv_dir: "{{ obsidia_app_root }}/venv"
+    obsidia_env_file: /etc/obsidia-server-sync.env
+    obsidia_sync_dir: /var/lib/obsidia-server-sync/data
+    obsidia_bind_host: 127.0.0.1
+    obsidia_bind_port: 8000
+    obsidia_nginx_site_name: obsidia-server-sync
+    obsidia_disable_default_site: true
+    obsidia_enable_http_api: false
+    obsidia_event_retention_ms: 2592000000
+    obsidia_compaction_interval_ms: 3600000
+    obsidia_api_key: "__SET_ME__"
+    obsidia_source_root: "{{ playbook_dir }}/.."
     obsidia_source_files:
       - main.py
       - requirements.txt
@@ -57,7 +75,7 @@
 
     - name: Upload backend application files
       ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../{{ item }}"
+        src: "{{ obsidia_source_root }}/{{ item }}"
         dest: "{{ obsidia_app_dir }}/{{ item }}"
         owner: "{{ obsidia_app_user }}"
         group: "{{ obsidia_app_group }}"
@@ -67,7 +85,7 @@
 
     - name: Configure backend environment file
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/templates/obsidia-server-sync.env.j2"
+        src: templates/obsidia-server-sync.env.j2
         dest: "{{ obsidia_env_file }}"
         owner: root
         group: root
@@ -83,7 +101,7 @@
 
     - name: Install systemd service
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/templates/obsidia-server-sync.service.j2"
+        src: templates/obsidia-server-sync.service.j2
         dest: "/etc/systemd/system/{{ obsidia_service_name }}.service"
         owner: root
         group: root
@@ -94,7 +112,7 @@
 
     - name: Install nginx site
       ansible.builtin.template:
-        src: "{{ playbook_dir }}/templates/nginx-obsidia-server-sync.conf.j2"
+        src: templates/nginx-obsidia-server-sync.conf.j2
         dest: "/etc/nginx/sites-available/{{ obsidia_nginx_site_name }}"
         owner: root
         group: root

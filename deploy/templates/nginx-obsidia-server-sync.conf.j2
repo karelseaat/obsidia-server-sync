@@ -1,6 +1,6 @@
 server {
-    listen 80{% if obsidia_nginx_default_server %} default_server{% endif %};
-    listen [::]:80{% if obsidia_nginx_default_server %} default_server{% endif %};
+    listen 80{% if obsidia_nginx_default_server | default(false) %} default_server{% endif %};
+    listen [::]:80{% if obsidia_nginx_default_server | default(false) %} default_server{% endif %};
     server_name {{ obsidia_nginx_server_name }};
 
     client_max_body_size 50m;

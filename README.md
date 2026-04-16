@@ -25,11 +25,17 @@ A FastAPI sync server designed to work with the Obsidian Auto Sync plugin.
 
 ## Deployment
 
-An Ansible playbook for **`aat@192.168.88.249`** is included under `deploy/`.
+An Ansible deployment for **`aat@192.168.88.249`** is included under `deploy/` using a flat layout:
+
+- `deploy/ansible.cfg`
+- `deploy/inventory.ini`
+- `deploy/playbook.yml`
+- `deploy/templates/`
 
 1. Set a real API key when you run the playbook:
    ```bash
-   ansible-playbook -i deploy/inventory.ini deploy/playbook.yml \
+   cd deploy
+   ansible-playbook playbook.yml \
      --extra-vars "obsidia_api_key=replace-with-a-real-secret"
    ```
 2. The playbook installs:
