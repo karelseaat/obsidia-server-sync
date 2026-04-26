@@ -145,3 +145,15 @@ Rename messages add `oldPath`; delete messages omit `content`. Successful push a
 ## More from Karelseaat
 
 For more projects and experiments, visit my GitHub Pages site: [karelseaat.github.io](https://karelseaat.github.io/)
+
+<!-- KEEP-EXPLORING-START -->
+## Keep Exploring
+
+If you made it to the bottom, jump straight into a few related repos:
+
+- [Obsidian Syncer](https://github.com/karelseaat/obsidian-syncer)
+- [Morckdrown](https://github.com/karelseaat/morckdrown)
+- [Terminal Presentation](https://github.com/karelseaat/terminal_presentation)
+
+- [Full project index](https://karelseaat.github.io/)
+<!-- KEEP-EXPLORING-END -->
