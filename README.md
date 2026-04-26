@@ -141,3 +141,7 @@ Rename messages add `oldPath`; delete messages omit `content`. Successful push a
   sudo journalctl -u nginx -u obsidia-server-sync -n 100 --no-pager
   ```
 - **Check what was synced:** synced files are written under `/var/lib/obsidia-server-sync/data`, and the event/state database is `/var/lib/obsidia-server-sync/data/.sync-state.sqlite3`.
+
+## More from Karelseaat
+
+For more projects and experiments, visit my GitHub Pages site: [karelseaat.github.io](https://karelseaat.github.io/)
